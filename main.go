@@ -6,9 +6,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/thoj/go-ircevent"
@@ -54,56 +56,39 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 		}
 		log.Printf("JSON: %v", string(body))
 
-		resolved_alerts, firing_alerts := SortAlerts(notification.Alerts)
-		var resolved_hosts, firing_hosts []string
+		var sortedAlerts = make(map[string][]Alert)
+		sortedAlerts["resolved"], sortedAlerts["firing"] = SortAlerts(notification.Alerts)
+
 		var instance string
-
-		// FIRING
-		var alertStatus = "firing"
-		for _, alert := range firing_alerts {
-			instance = alert.Labels["instance"].(string)
-			instance = strings.Split(instance, ".")[0]
-			firing_hosts = append(firing_hosts, instance)
-
-		}
-
-		context := NotificationContext{
-			Alert:         &notification.Alerts[0],
-			Notification:  &notification,
-			Status:        alertStatus,
-			InstanceCount: len(firing_hosts),
-			ColorStart:    getColorcode(alertStatus),
-			ColorEnd:      "\x03",
-		}
-
+		var instanceList []string
 		var buf bytes.Buffer
-		err = notificationTemplate.Execute(&buf, &context)
-		bot.Privmsg(*channel, buf.String())
-		bot.Privmsg(*channel, strings.Join(firing_hosts, ","))
 
-		// RESOLVED
-		alertStatus = "resolved"
-		for _, alert := range resolved_alerts {
-			instance = alert.Labels["instance"].(string)
-			instance = strings.Split(instance, ".")[0]
-			resolved_hosts = append(resolved_hosts, instance)
+		for alertStatus, alertList := range sortedAlerts {
+			for _, alert := range alertList {
+				instance = alert.Labels["instance"].(string)
+				instance = strings.Split(instance, ".")[0]
+				instanceList = append(instanceList, instance)
+			}
 
+			context := NotificationContext{
+				Alert:         &notification.Alerts[0],
+				Notification:  &notification,
+				Status:        strings.ToUpper(alertStatus),
+				InstanceCount: len(instanceList),
+				ColorStart:    getColorcode(alertStatus),
+				ColorEnd:      "\x03",
+			}
+
+			// Clear buffer
+			buf.Reset()
+
+			// Sort instances
+			sort.Strings(instanceList)
+
+			err = notificationTemplate.Execute(&buf, &context)
+			bot.Privmsg(*channel, buf.String())
+			bot.Privmsg(*channel, fmt.Sprintf("    %s", strings.Join(instanceList, ", ")))
 		}
-
-		context = NotificationContext{
-			Alert:         &notification.Alerts[0],
-			Notification:  &notification,
-			Status:        alertStatus,
-			InstanceCount: len(resolved_hosts),
-			ColorStart:    getColorcode(alertStatus),
-			ColorEnd:      "\x03",
-		}
-
-		buf.Reset()
-		err = notificationTemplate.Execute(&buf, &context)
-		bot.Privmsg(*channel, buf.String())
-		bot.Privmsg(*channel, strings.Join(resolved_hosts, ","))
-
 	}
 
 }
