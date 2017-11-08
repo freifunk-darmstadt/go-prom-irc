@@ -28,7 +28,7 @@ var (
 
 func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 
-	const templateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}]  {{ .Alert.Labels.alertname}} - {{ .Alert.Annotations.description}}"
+	const templateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}} - {{ .Alert.Annotations.description}}"
 
 	notificationTemplate, err := template.New("notification").Parse(templateString)
 	if err != nil {
