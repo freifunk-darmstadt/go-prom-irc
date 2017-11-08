@@ -6,9 +6,12 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
+	"sort"
+	"strings"
 
 	"github.com/thoj/go-ircevent"
 
@@ -19,38 +22,15 @@ import (
 var (
 	host     = flag.String("host", "irc.hackint.org", "Hostname of the IRC server")
 	port     = flag.Int("sslport", 6697, "SSL capable port of the IRC server")
-	channel  = flag.String("channel", "", "Target to send notifications to, likely a channel.")
+	channel  = flag.String("channel", "#fleaz", "Target to send notifications to, likely a channel.")
 	nickname = flag.String("nickname", "go-prom-irc", "Nickname to assume once connected")
 	gecos    = flag.String("gecos", "go-prom-irc", "Realname to assume once connected")
-	cafile   = flag.String("cafile", "", "Path to the ca file that verifies the server certificate.")
+	cafile   = flag.String("cafile", "hackint-rootca.crt", "Path to the ca file that verifies the server certificate.")
 )
-
-//func RegisterConnect(s ircx.Sender, m *irc.Message) {
-//	log.Println("Connected...")
-//	s.Send(&irc.Message{
-//		Command:       irc.JOIN,
-//		Params:        []string{"#ffda-noc"},
-//		EmptyTrailing: true,
-//	})
-//}
-//
-//func PingHandler(s ircx.Sender, m *irc.Message) {
-//	log.Println("P[IO]NG")
-//	s.Send(&irc.Message{
-//		Command:  irc.PONG,
-//		Params:   m.Params,
-//		Trailing: m.Trailing,
-//	})
-//}
-//
-//func RegisterHandlers(bot *ircx.Bot) {
-//	bot.HandleFunc(irc.RPL_WELCOME, RegisterConnect)
-//	bot.HandleFunc(irc.PING, PingHandler)
-//}
 
 func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 
-	const templateString = "{{ .Alert.Labels.instance }} {{ .ColorStart }}{{ .Alert.Labels.alertname}}{{ .ColorEnd }} - {{ .Alert.Annotations.description}}"
+	const templateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}} - {{ .Alert.Annotations.description}}"
 
 	notificationTemplate, err := template.New("notification").Parse(templateString)
 	if err != nil {
@@ -60,84 +40,6 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 	return func(wr http.ResponseWriter, req *http.Request) {
 		defer req.Body.Close()
 		decoder := json.NewDecoder(req.Body)
-		/*
-
-			   {
-			     "version": "3",
-			     "groupKey": <number>     // key identifying the group of alerts (e.g. to deduplicate)
-			     "status": "<resolved|firing>",
-			     "receiver": <string>,
-			     "groupLabels": <object>,
-			     "commonLabels": <object>,
-			     "commonAnnotations": <object>,
-			     "externalURL": <string>,  // backling to the Alertmanager.
-			     "alerts": [
-			       {
-			         "labels": <object>,
-			         "annotations": <object>,
-			         "startsAt": "<rfc3339>",
-			         "endsAt": "<rfc3339>"
-			       },
-			       ...
-			     ]
-			   }
-
-			---
-
-
-			{"version":"3",
-			 "groupKey":16716837308297233527,
-			  "status":"firing",
-			  "receiver":"irc",
-			  "groupLabels":{
-				  "alertname":"InstanceHighCpu"
-			  },
-			  "commonLabels":{
-				  "alertname":"InstanceHighCpu",
-				  "severity":"page"
-			  },
-			  "commonAnnotations":{
-				  "description":" has high cpu activity",
-				  "summary":"Instance : cpu high"
-			  },
-			  "externalURL":"http://elsa.darmstadt.freifunk.net:9093",
-			  "alerts":[
-			  	{"labels":{
-					"alertname":"InstanceHighCpu",
-					"severity":"page"
-				},
-				"annotations":{
-					"description":
-					" has high cpu activity",
-					"summary":"Instance : cpu high"
-				},
-				"startsAt":"2017-02-28T03:00:22.803+01:00",
-				"endsAt":"0001-01-01T00:00:00Z"
-				}
-			  ]
-			}
-
-
-		*/
-
-		type Alert struct {
-			Labels      map[string]interface{} `json:"labels"`
-			Annotations map[string]interface{} `json:"annotations"`
-			StartsAt    string                 `json:"startsAt"`
-			EndsAt      string                 `json:"endsAt"`
-		}
-
-		type Notification struct {
-			Version           string                 `json:"version"`
-			GroupKey          uint64                 `json:"groupKey"`
-			Status            string                 `json:"status"`
-			Receiver          string                 `json:"receiver"`
-			GroupLables       map[string]interface{} `json:"groupLabels"`
-			CommonLabels      map[string]interface{} `json:"commonLabels"`
-			CommonAnnotations map[string]interface{} `json:"commonAnnotations"`
-			ExternalURL       string                 `json:"externalURL"`
-			Alerts            []Alert                `json:"alerts"`
-		}
 
 		var notification Notification
 
@@ -153,25 +55,40 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 			return
 		}
 		log.Printf("JSON: %v", string(body))
-		for _, alert := range notification.Alerts {
-			type NotificationContext struct {
-				Alert        *Alert
-				Notification *Notification
-				ColorStart   string
-				ColorEnd     string
-			}
-			context := NotificationContext{
-				Alert:        &alert,
-				Notification: &notification,
-				ColorStart:   getColorcode(notification.Status),
-				ColorEnd:     "\x03",
+
+		var sortedAlerts = make(map[string][]Alert)
+		sortedAlerts["resolved"], sortedAlerts["firing"] = SortAlerts(notification.Alerts)
+
+		var instance string
+		var instanceList []string
+		var buf bytes.Buffer
+
+		for alertStatus, alertList := range sortedAlerts {
+			for _, alert := range alertList {
+				instance = alert.Labels["instance"].(string)
+				instance = strings.Split(instance, ".")[0]
+				instanceList = append(instanceList, instance)
 			}
 
-			var buf bytes.Buffer
+			context := NotificationContext{
+				Alert:         &notification.Alerts[0],
+				Notification:  &notification,
+				Status:        strings.ToUpper(alertStatus),
+				InstanceCount: len(instanceList),
+				ColorStart:    getColorcode(alertStatus),
+				ColorEnd:      "\x03",
+			}
+
+			// Clear buffer
+			buf.Reset()
+
+			// Sort instances
+			sort.Strings(instanceList)
+
 			err = notificationTemplate.Execute(&buf, &context)
 			bot.Privmsg(*channel, buf.String())
+			bot.Privmsg(*channel, fmt.Sprintf("    %s", strings.Join(instanceList, ", ")))
 		}
-
 	}
 
 }
