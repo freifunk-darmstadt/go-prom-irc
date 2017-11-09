@@ -63,7 +63,7 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 		log.Printf("JSON: %v", string(body))
 
 		var sortedAlerts = make(map[string][]Alert)
-		sortedAlerts["resolved"], sortedAlerts["firing"] = SortAlerts(notification.Alerts)
+		sortedAlerts["firing"], sortedAlerts["resolved"] = SortAlerts(notification.Alerts)
 
 		var instance string
 		var instanceList []string
