@@ -30,9 +30,15 @@ var (
 
 func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 
-	const templateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}} - {{ .Alert.Annotations.description}}"
+	const firingTemplateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}} - {{ .Alert.Annotations.description}}"
+	const resolvedTemplateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}}"
 
-	notificationTemplate, err := template.New("notification").Parse(templateString)
+	firingTemplate, err := template.New("notification").Parse(firingTemplateString)
+	if err != nil {
+		log.Fatalf("Failed to parse template: %v", err)
+	}
+
+	resolvedTemplate, err := template.New("notification").Parse(resolvedTemplateString)
 	if err != nil {
 		log.Fatalf("Failed to parse template: %v", err)
 	}
@@ -64,6 +70,11 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 		var buf bytes.Buffer
 
 		for alertStatus, alertList := range sortedAlerts {
+			// Clear buffer
+			buf.Reset()
+			// Clear InstanceList
+			instanceList = instanceList[:0]
+
 			for _, alert := range alertList {
 				instance = alert.Labels["instance"].(string)
 				instance = strings.Split(instance, ".")[0]
@@ -79,15 +90,17 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 				ColorEnd:      "\x03",
 			}
 
-			// Clear buffer
-			buf.Reset()
-
-			// Sort instances
-			sort.Strings(instanceList)
-
-			err = notificationTemplate.Execute(&buf, &context)
-			bot.Privmsg(*channel, buf.String())
-			bot.Privmsg(*channel, fmt.Sprintf("    %s", strings.Join(instanceList, ", ")))
+			if context.InstanceCount > 0 {
+				// Sort instances
+				sort.Strings(instanceList)
+				if strings.Compare(alertStatus, "firing") == 0 {
+					err = firingTemplate.Execute(&buf, &context)
+				} else {
+					err = resolvedTemplate.Execute(&buf, &context)
+				}
+				bot.Privmsg(*channel, buf.String())
+				bot.Privmsg(*channel, fmt.Sprintf("    -> %s", strings.Join(instanceList, ", ")))
+			}
 		}
 	}
 
