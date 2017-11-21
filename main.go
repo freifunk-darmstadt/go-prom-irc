@@ -6,11 +6,9 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
-	"sort"
 	"strings"
 
 	"github.com/thoj/go-ircevent"
@@ -30,8 +28,9 @@ var (
 
 func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 
-	const firingTemplateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}} - {{ .Alert.Annotations.description}}"
+	const firingTemplateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}}"
 	const resolvedTemplateString = "[{{ .ColorStart }}{{ .Status }}{{ .ColorEnd }}:{{ .InstanceCount }}] {{ .Alert.Labels.alertname}}"
+	const hostListTemplateString = "→ {{range $i, $instance := . }}{{if $i}}, {{end}}{{$instance.Name}}{{if $instance.Value}}({{$instance.Value}}){{end}}{{end}}"
 
 	firingTemplate, err := template.New("notification").Parse(firingTemplateString)
 	if err != nil {
@@ -39,6 +38,11 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 	}
 
 	resolvedTemplate, err := template.New("notification").Parse(resolvedTemplateString)
+	if err != nil {
+		log.Fatalf("Failed to parse template: %v", err)
+	}
+
+	hostListTemplate, err := template.New("notification").Parse(hostListTemplateString)
 	if err != nil {
 		log.Fatalf("Failed to parse template: %v", err)
 	}
@@ -65,8 +69,8 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 		var sortedAlerts = make(map[string][]Alert)
 		sortedAlerts["firing"], sortedAlerts["resolved"] = SortAlerts(notification.Alerts)
 
-		var instance string
-		var instanceList []string
+		var instance Instance
+		var instanceList []Instance
 		var buf bytes.Buffer
 
 		for alertStatus, alertList := range sortedAlerts {
@@ -76,8 +80,14 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 			instanceList = instanceList[:0]
 
 			for _, alert := range alertList {
-				instance = alert.Labels["instance"].(string)
-				instance = strings.Split(instance, ".")[0]
+				name := alert.Labels["instance"].(string)
+				name = strings.Split(name, ".")[0]
+				value, ok := alert.Labels["value"].(string)
+				if ok {
+					instance = Instance{Name: name, Value: value}
+				} else {
+					instance = Instance{Name: name}
+				}
 				instanceList = append(instanceList, instance)
 			}
 
@@ -92,14 +102,16 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 
 			if context.InstanceCount > 0 {
 				// Sort instances
-				sort.Strings(instanceList)
+				//sort.Strings(instanceList)
 				if strings.Compare(alertStatus, "firing") == 0 {
-					err = firingTemplate.Execute(&buf, &context)
+					_ = firingTemplate.Execute(&buf, &context)
 				} else {
-					err = resolvedTemplate.Execute(&buf, &context)
+					_ = resolvedTemplate.Execute(&buf, &context)
 				}
 				bot.Privmsg(*channel, buf.String())
-				bot.Privmsg(*channel, fmt.Sprintf("    -> %s", strings.Join(instanceList, ", ")))
+				buf.Reset()
+				_ = hostListTemplate.Execute(&buf, &instanceList)
+				bot.Privmsg(*channel, buf.String())
 			}
 		}
 	}

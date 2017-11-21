@@ -32,6 +32,11 @@ type NotificationContext struct {
 	ColorEnd      string
 }
 
+type Instance struct {
+	Name  string
+	Value string
+}
+
 func SortAlerts(alerts []Alert) (firing, resolved []Alert) {
 	for _, alert := range alerts {
 		tStart, _ := time.Parse(time.RFC3339, alert.StartsAt)
