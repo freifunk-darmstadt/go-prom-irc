@@ -81,7 +81,7 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 
 			for _, alert := range alertList {
 				name := alert.Labels["instance"].(string)
-				name = strings.Split(name, ".")[0]
+				name = strings.Split(name, ",")[0]
 				value, ok := alert.Labels["value"].(string)
 				if ok {
 					instance = Instance{Name: name, Value: value}
