@@ -82,7 +82,7 @@ func CreateFunctionNotifyFunction(bot *irc.Connection) http.HandlerFunc {
 			for _, alert := range alertList {
 				name := alert.Labels["instance"].(string)
 				// TODO: Add hostname shortening
-				value, ok := alert.Labels["value"].(string)
+				value, ok := alert.Annotations["value"].(string)
 				if ok {
 					instance = Instance{Name: name, Value: value}
 				} else {
